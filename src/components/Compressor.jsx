@@ -12,6 +12,7 @@ export default function Compressor() {
   const {
     compress,
     reset,
+    triggerDownload,
     status,      // 'idle' | 'uploading' | 'processing' | 'done' | 'error'
     progress,
     originalSize,
@@ -155,21 +156,23 @@ export default function Compressor() {
 
           {/* Actions */}
           <div className="flex gap-3">
-            <a
-              href={downloadUrl}
-              download={downloadName}
-              className="btn-primary flex-1 py-3 text-base no-underline"
+            {/*
+              Use a <button> + programmatic triggerDownload() instead of
+              <a href=blob: download> — Android Chrome/Samsung Browser often
+              silently ignores <a download> on blob URLs already in the DOM.
+              triggerDownload() creates a transient anchor and clicks it
+              synchronously within the user gesture, which is always allowed.
+            */}
+            <button
+              className="btn-primary flex-1 py-3 text-base"
               data-testid="download-btn"
-              onClick={() => {
-                // Revoke object URL after a short delay to free memory
-                setTimeout(() => URL.revokeObjectURL(downloadUrl), 60_000)
-              }}
+              onClick={triggerDownload}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
               </svg>
               Download compressed PDF
-            </a>
+            </button>
             <button
               className="btn-secondary px-4"
               onClick={handleReset}
