@@ -45,6 +45,11 @@ export const config = {
   api: {
     bodyParser: false,
     responseLimit: '50mb',
+    // Tell Vercel's infrastructure layer to allow bodies up to 50 MB.
+    // Without this, Vercel enforces its default 4.5 MB request body cap
+    // BEFORE the request even reaches the function — causing silent 413s
+    // on files as small as ~3 MB (multipart encoding adds ~33% overhead).
+    sizeLimit: '50mb',
     maxDuration: 60,
   },
 }
@@ -147,8 +152,10 @@ function compressWithMuPDF(inputBuffer, level) {
     const imgW = pix.getWidth()
     const imgH = pix.getHeight()
 
-    // 2. Encode as JPEG
+    // 2. Encode as JPEG then free the Pixmap immediately — large PDFs can
+    //    exhaust WASM heap if all pages' Pixmaps are kept alive in parallel
     const jpegBytes = pix.asJPEG(quality, false)   // → Uint8Array
+    pix.destroy && pix.destroy()
 
     // 3. Build Image XObject dictionary with /DCTDecode filter
     const imgDict = outDoc.newDictionary()
@@ -273,10 +280,12 @@ export default async function handler(req, res) {
     console.error('[compress] Error:', err)
     if (formTmpPath) try { unlinkSync(formTmpPath) } catch (_) {}
 
-    const statusCode = err.code === 'LIMIT_FILE_SIZE' ? 413 : 500
+    const is413 = err.code === 'LIMIT_FILE_SIZE' || err.statusCode === 413 || err.status === 413
+    const statusCode = is413 ? 413 : 500
     const message =
-      err.code === 'LIMIT_FILE_SIZE'     ? 'File exceeds the 50 MB limit.'
+      is413                                ? 'File too large. Maximum upload size is 50 MB. Please use a smaller file.'
       : err.message?.includes('encrypted') ? 'Encrypted PDFs are not supported. Please remove the password first.'
+      : err.message?.includes('timeout')   ? 'Compression timed out. Please try the High compression level for large files.'
       : 'Failed to compress the PDF. The file may be corrupted or unsupported.'
 
     return sendJson(res, statusCode, { error: message })
