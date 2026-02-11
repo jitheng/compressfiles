@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://compressfiles.vercel.app/sitemap.xml
