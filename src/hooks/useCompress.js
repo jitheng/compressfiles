@@ -5,6 +5,12 @@ import axios from 'axios'
  * useCompress — handles the full lifecycle of a PDF compression request.
  *
  * States: idle → uploading → processing → done | error
+ *
+ * Mobile notes:
+ * - We keep a blobRef so the caller can trigger a forced download on Android
+ *   (Android Chrome sometimes silently ignores <a download> on blob URLs).
+ * - The triggerDownload() helper creates a transient <a> element and
+ *   programmatically clicks it — the only reliable download path on Android.
  */
 export function useCompress() {
   const [status, setStatus] = useState('idle')
@@ -15,7 +21,8 @@ export function useCompress() {
   const [downloadName, setDownloadName] = useState(null)
   const [errorMessage, setErrorMessage] = useState(null)
 
-  // Track object URL for cleanup
+  // Keep the raw blob so we can force-download on Android
+  const blobRef = useRef(null)
   const blobUrlRef = useRef(null)
 
   const reset = useCallback(() => {
@@ -23,6 +30,7 @@ export function useCompress() {
       URL.revokeObjectURL(blobUrlRef.current)
       blobUrlRef.current = null
     }
+    blobRef.current = null
     setStatus('idle')
     setProgress(0)
     setOriginalSize(null)
@@ -31,6 +39,35 @@ export function useCompress() {
     setDownloadName(null)
     setErrorMessage(null)
   }, [])
+
+  /**
+   * triggerDownload — programmatic download that works on Android Chrome.
+   *
+   * Android Chrome/Samsung Browser can silently ignore <a href=blob: download>
+   * when the anchor is already in the DOM at render time. Creating a transient
+   * anchor and clicking it within the same user-gesture stack bypasses that.
+   */
+  const triggerDownload = useCallback(() => {
+    if (!blobRef.current || !downloadName) return
+
+    // Revoke any previous URL and create a fresh one
+    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current)
+    const url = URL.createObjectURL(blobRef.current)
+    blobUrlRef.current = url
+
+    const a = document.createElement('a')
+    a.href = url
+    a.download = downloadName
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    // Clean up the DOM element; keep the blob URL alive for 60 s
+    setTimeout(() => {
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      blobUrlRef.current = null
+    }, 60_000)
+  }, [downloadName])
 
   const compress = useCallback(async (file, level = 'medium') => {
     reset()
@@ -45,7 +82,8 @@ export function useCompress() {
     try {
       const response = await axios.post('/api/compress', formData, {
         responseType: 'blob',
-        headers: { 'Content-Type': 'multipart/form-data' },
+        // Do NOT set Content-Type manually — browser must set the
+        // multipart boundary; axios will do it automatically.
         onUploadProgress: (evt) => {
           if (evt.total) {
             const pct = Math.round((evt.loaded / evt.total) * 40) + 10 // 10–50%
@@ -53,9 +91,14 @@ export function useCompress() {
           }
         },
         onDownloadProgress: (evt) => {
+          // Content-Length may be absent on Vercel (chunked transfer),
+          // so guard against evt.total being 0/undefined.
           if (evt.total) {
             const pct = Math.round((evt.loaded / evt.total) * 40) + 55 // 55–95%
             setProgress(pct)
+          } else {
+            // Pulse between 60–80% so the bar doesn't appear frozen
+            setProgress((prev) => (prev < 80 ? prev + 3 : prev))
           }
         },
       })
@@ -71,6 +114,9 @@ export function useCompress() {
       }
 
       const blob = response.data
+      blobRef.current = blob
+
+      // Create the object URL for the inline <a> fallback (desktop)
       const url = URL.createObjectURL(blob)
       blobUrlRef.current = url
 
@@ -103,6 +149,7 @@ export function useCompress() {
   return {
     compress,
     reset,
+    triggerDownload,
     status,
     progress,
     originalSize,
