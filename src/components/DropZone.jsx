@@ -55,14 +55,20 @@ export default function DropZone({ onFile, disabled }) {
     noClick: true,
   })
 
-  // Fallback tap handler: directly trigger the hidden input for browsers
-  // that block JS-initiated .click() calls outside a sync user gesture
+  // Fallback tap handler for Android/iOS: call .click() directly on the
+  // hidden input. Do NOT call e.preventDefault() here — that would break
+  // the label's native htmlFor association (which IS the reliable path on
+  // Android Chrome). We only add .click() as an extra safety net for
+  // browsers that don't honor htmlFor on hidden inputs.
   const handleLabelClick = useCallback(
     (e) => {
-      if (disabled) return
-      // Let the <label>'s default htmlFor association handle it on desktop;
-      // on mobile, explicitly call .click() as a direct-gesture handler.
-      e.preventDefault()
+      if (disabled) {
+        e.preventDefault()
+        return
+      }
+      // Let the native htmlFor association fire first (don't preventDefault).
+      // Then also programmatically click the input — harmless on desktop, and
+      // ensures the picker opens on Samsung Internet which may ignore htmlFor.
       inputRef.current?.click()
     },
     [disabled],

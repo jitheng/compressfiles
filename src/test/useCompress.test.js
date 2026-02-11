@@ -9,6 +9,13 @@ vi.mock('axios')
 global.URL.createObjectURL = vi.fn(() => 'blob:mock-url')
 global.URL.revokeObjectURL = vi.fn()
 
+// Mock document.body.appendChild / removeChild for triggerDownload
+const appendChildSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((el) => {
+  // Simulate the anchor click without actually navigating
+  return el
+})
+const removeChildSpy = vi.spyOn(document.body, 'removeChild').mockImplementation(() => {})
+
 describe('useCompress', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -83,5 +90,36 @@ describe('useCompress', () => {
     expect(result.current.originalSize).toBeNull()
     expect(result.current.compressedSize).toBeNull()
     expect(result.current.downloadUrl).toBeNull()
+  })
+
+  it('triggerDownload creates a transient anchor and clicks it (Android fallback)', async () => {
+    const mockBlob = new Blob(['%PDF'], { type: 'application/pdf' })
+    axios.post.mockResolvedValue({
+      data: mockBlob,
+      headers: { 'x-compressed-size': '500' },
+    })
+
+    const { result } = renderHook(() => useCompress())
+    const mockFile = new File(['%PDF'], 'doc.pdf', { type: 'application/pdf' })
+
+    await act(async () => {
+      await result.current.compress(mockFile, 'medium')
+    })
+
+    expect(result.current.status).toBe('done')
+
+    // triggerDownload should be a function
+    expect(typeof result.current.triggerDownload).toBe('function')
+
+    act(() => {
+      result.current.triggerDownload()
+    })
+
+    // Should have appended at least one transient <a> to body
+    const anchorCall = appendChildSpy.mock.calls.find(
+      ([el]) => el?.tagName === 'A',
+    )
+    expect(anchorCall).toBeTruthy()
+    expect(anchorCall[0].download).toBe('doc_compressed.pdf')
   })
 })
