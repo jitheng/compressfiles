@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  body {
+    @apply bg-slate-50 text-slate-800;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-brand-500 text-white font-semibold text-sm
+           hover:bg-brand-600 active:bg-brand-700 transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg bg-white border border-slate-200 text-slate-700 font-semibold text-sm
+           hover:bg-slate-50 active:bg-slate-100 transition-colors duration-150
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+}
+
+/* Smooth drop indicator animation */
+@keyframes pulse-border {
+  0%, 100% { border-color: #4f6ef7; }
+  50%       { border-color: #a5b4fc; }
+}
+.drop-active {
+  animation: pulse-border 1s ease-in-out infinite;
+}
