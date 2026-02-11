@@ -52,6 +52,16 @@ export default function Compressor() {
         <DropZone onFile={handleFile} disabled={isBusy} />
       )}
 
+      {/* Large file advisory — shown when file > 5 MB */}
+      {file && !isDone && file.size > 5 * 1024 * 1024 && (
+        <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
+          <svg className="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+          </svg>
+          <span>Large file ({(file.size / 1024 / 1024).toFixed(1)} MB) — compression may take up to 60 seconds. For fastest results, use <strong>High</strong> compression level.</span>
+        </div>
+      )}
+
       {/* Selected file info */}
       {file && !isDone && (
         <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3">

@@ -84,6 +84,8 @@ export function useCompress() {
         responseType: 'blob',
         // Do NOT set Content-Type manually — browser must set the
         // multipart boundary; axios will do it automatically.
+        // 60 s matches Vercel function maxDuration; large files can take 40-55 s.
+        timeout: 60_000,
         onUploadProgress: (evt) => {
           if (evt.total) {
             const pct = Math.round((evt.loaded / evt.total) * 40) + 10 // 10–50%
@@ -134,12 +136,18 @@ export function useCompress() {
       setProgress(100)
       setStatus('done')
     } catch (err) {
-      const msg =
-        err?.response?.data instanceof Blob
-          ? await err.response.data.text().then((t) => {
-              try { return JSON.parse(t).error } catch { return t }
-            })
-          : err.message || 'An unexpected error occurred.'
+      let msg
+      if (err.code === 'ECONNABORTED' || err.message?.includes('timeout')) {
+        msg = 'The request timed out. Your PDF may be too large or complex — try the High compression level which is faster to process.'
+      } else if (err?.response?.data instanceof Blob) {
+        msg = await err.response.data.text().then((t) => {
+          try { return JSON.parse(t).error } catch { return t }
+        })
+      } else if (err?.response?.status === 413) {
+        msg = 'File too large. Maximum upload size is 50 MB.'
+      } else {
+        msg = err.message || 'An unexpected error occurred.'
+      }
       setErrorMessage(msg)
       setStatus('error')
       setProgress(0)
