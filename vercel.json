@@ -6,6 +6,10 @@
     "api/compress.js": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "api/blob-upload.js": {
+      "maxDuration": 10,
+      "memory": 256
     }
   },
   "rewrites": [

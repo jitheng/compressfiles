@@ -40,15 +40,26 @@ import { join } from 'path'
 import { randomBytes } from 'crypto'
 import * as mupdf from 'mupdf'
 import path from 'path'
+import { del } from '@vercel/blob'
 
+/**
+ * Dual-mode handler:
+ *
+ * Mode A — Vercel Blob (production, large files):
+ *   POST /api/compress  application/json  { blobUrl: "https://...", level: "medium" }
+ *   The browser already uploaded the file directly to Vercel Blob CDN
+ *   (bypassing the 4.5 MB serverless body limit entirely). This function
+ *   fetches the file from blobUrl, compresses it, deletes the blob, and
+ *   returns the compressed PDF.
+ *
+ * Mode B — Direct multipart (local dev / fallback for files ≤4 MB):
+ *   POST /api/compress  multipart/form-data  { file: <binary>, level: "medium" }
+ *   Legacy path used when BLOB_READ_WRITE_TOKEN is not configured or file is small.
+ */
 export const config = {
   api: {
     bodyParser: false,
     responseLimit: '50mb',
-    // Tell Vercel's infrastructure layer to allow bodies up to 50 MB.
-    // Without this, Vercel enforces its default 4.5 MB request body cap
-    // BEFORE the request even reaches the function — causing silent 413s
-    // on files as small as ~3 MB (multipart encoding adds ~33% overhead).
     sizeLimit: '50mb',
     maxDuration: 60,
   },
@@ -220,29 +231,57 @@ export default async function handler(req, res) {
   }
 
   let formTmpPath = null
+  let blobUrl     = null   // track blob URL for cleanup on error
 
   try {
-    const { fields, files } = await parseForm(req)
+    const contentType = req.headers['content-type'] || ''
+    let inputBuffer, level, originalFilename
 
-    // ── validate file ──────────────────────────────────────────────────────
-    const uploadedFile = Array.isArray(files.file) ? files.file[0] : files.file
-    if (!uploadedFile) return sendJson(res, 400, { error: 'No file uploaded.' })
+    if (contentType.includes('application/json')) {
+      // ── Mode A: Vercel Blob — browser already uploaded, we just fetch ──
+      const chunks = []
+      for await (const chunk of req) chunks.push(chunk)
+      const body = JSON.parse(Buffer.concat(chunks).toString())
 
-    const ext = path.extname(uploadedFile.originalFilename || '').toLowerCase()
-    if (ext !== '.pdf') return sendJson(res, 400, { error: 'Only PDF files are accepted.' })
+      blobUrl  = body.blobUrl
+      level    = body.level
+      originalFilename = body.filename || 'file.pdf'
 
-    formTmpPath = uploadedFile.filepath
+      if (!blobUrl) return sendJson(res, 400, { error: 'Missing blobUrl.' })
 
-    // ── validate level ────────────────────────────────────────────────────
-    const rawLevel = Array.isArray(fields.level) ? fields.level[0] : fields.level
-    const level    = Object.keys(LEVEL_CONFIG).includes(rawLevel) ? rawLevel : 'medium'
+      const ext = path.extname(originalFilename).toLowerCase()
+      if (ext !== '.pdf') return sendJson(res, 400, { error: 'Only PDF files are accepted.' })
 
-    // ── read & delete upload immediately ──────────────────────────────────
-    const inputBuffer = readFileSync(formTmpPath)
-    try { unlinkSync(formTmpPath) } catch (_) {}
-    formTmpPath = null
+      // Fetch the PDF from Vercel Blob CDN (fast — same Vercel network)
+      const fetchRes = await fetch(blobUrl)
+      if (!fetchRes.ok) throw new Error(`Failed to fetch blob: ${fetchRes.status}`)
+      inputBuffer = Buffer.from(await fetchRes.arrayBuffer())
 
-    // ── compress: try GS first, fall back to MuPDF ───────────────────────
+    } else {
+      // ── Mode B: Legacy multipart (local dev / small files ≤4.5 MB) ─────
+      const { fields, files } = await parseForm(req)
+
+      const uploadedFile = Array.isArray(files.file) ? files.file[0] : files.file
+      if (!uploadedFile) return sendJson(res, 400, { error: 'No file uploaded.' })
+
+      const ext = path.extname(uploadedFile.originalFilename || '').toLowerCase()
+      if (ext !== '.pdf') return sendJson(res, 400, { error: 'Only PDF files are accepted.' })
+
+      formTmpPath      = uploadedFile.filepath
+      originalFilename = uploadedFile.originalFilename || 'file.pdf'
+
+      const rawLevel = Array.isArray(fields.level) ? fields.level[0] : fields.level
+      level = rawLevel
+
+      inputBuffer = readFileSync(formTmpPath)
+      try { unlinkSync(formTmpPath) } catch (_) {}
+      formTmpPath = null
+    }
+
+    // ── validate level ──────────────────────────────────────────────────
+    if (!Object.keys(LEVEL_CONFIG).includes(level)) level = 'medium'
+
+    // ── compress: try GS first, fall back to MuPDF ─────────────────────
     let compressedBuffer
     let engine
 
@@ -260,8 +299,14 @@ export default async function handler(req, res) {
       compressedBuffer = inputBuffer
     }
 
-    // ── respond ───────────────────────────────────────────────────────────
-    const baseName   = (uploadedFile.originalFilename || 'file').replace(/\.pdf$/i, '')
+    // ── delete blob after successful compression ──────────────────────
+    if (blobUrl) {
+      try { await del(blobUrl) } catch (_) { /* non-fatal */ }
+      blobUrl = null
+    }
+
+    // ── respond ───────────────────────────────────────────────────────
+    const baseName   = originalFilename.replace(/\.pdf$/i, '')
     const outputName = `${baseName}_compressed.pdf`
 
     return sendBuffer(res, 200, {
@@ -279,11 +324,13 @@ export default async function handler(req, res) {
   } catch (err) {
     console.error('[compress] Error:', err)
     if (formTmpPath) try { unlinkSync(formTmpPath) } catch (_) {}
+    // Clean up the blob on error so it doesn't linger
+    if (blobUrl) { try { await del(blobUrl) } catch (_) {} }
 
     const is413 = err.code === 'LIMIT_FILE_SIZE' || err.statusCode === 413 || err.status === 413
     const statusCode = is413 ? 413 : 500
     const message =
-      is413                                ? 'File too large. Maximum upload size is 50 MB. Please use a smaller file.'
+      is413                                ? 'File too large. Maximum upload size is 50 MB.'
       : err.message?.includes('encrypted') ? 'Encrypted PDFs are not supported. Please remove the password first.'
       : err.message?.includes('timeout')   ? 'Compression timed out. Please try the High compression level for large files.'
       : 'Failed to compress the PDF. The file may be corrupted or unsupported.'
