@@ -1,22 +1,21 @@
 /**
  * Vercel Serverless Function: POST /api/blob-upload
  *
- * Issues a short-lived Vercel Blob client-upload token so the browser can
- * PUT a file directly to Vercel Blob CDN — bypassing the 4.5 MB serverless
- * function body limit entirely.
+ * Implements the handleUploadUrl wire protocol that @vercel/blob/client's
+ * upload() function expects. This is the correct approach for non-Next.js
+ * (raw Node HTTP) handlers — instead of using handleUpload() which requires
+ * a Web API Request object and is Next.js-only.
  *
- * Uses generateClientTokenFromReadWriteToken() — the correct low-level API
- * for non-Next.js (raw Node HTTP) handlers.  handleUpload() requires a Web
- * API Request object and is Next.js-only.
+ * Wire protocol (sent by upload() client):
+ *   Browser → POST /api/blob-upload
+ *             { type: 'blob.generate-client-token',
+ *               payload: { pathname: 'foo.pdf', callbackUrl: '', ... } }
+ *   Server  ← { clientToken: '<signed-token>' }
  *
- * Protocol:
- *   Browser → POST /api/blob-upload { filename: "foo.pdf" }
- *   Server  ← { token: "<client-token>", blobApiUrl: "https://blob.vercel-storage.com" }
+ *   Browser then PUTs the file directly to Vercel Blob CDN using the token.
+ *   This bypasses the 4.5 MB serverless function body limit entirely.
  *
- *   Browser → PUT <blobApiUrl>/<pathname>?token=<client-token>  (file bytes)
- *   CDN     ← { url: "https://…vercel-storage.com/foo-<rand>.pdf" }
- *
- *   Browser → POST /api/compress { blobUrl, level, filename }
+ *   After CDN upload, browser → POST /api/compress { blobUrl, level, filename }
  *
  * Local dev:
  *   BLOB_READ_WRITE_TOKEN not set → returns { localMode: true }
@@ -58,36 +57,44 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Parse request body to get the filename
+    // Parse request body
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
     const body = JSON.parse(Buffer.concat(chunks).toString())
-    const filename = body.filename || 'upload.pdf'
 
-    // Validate: PDFs only
-    if (!filename.toLowerCase().endsWith('.pdf')) {
-      return sendJson(res, 400, { error: 'Only PDF files are accepted.' })
+    // Handle the handleUploadUrl wire protocol:
+    // upload() sends { type: 'blob.generate-client-token', payload: { pathname, callbackUrl } }
+    if (body.type === 'blob.generate-client-token') {
+      const { pathname, callbackUrl } = body.payload || {}
+
+      if (!pathname || !pathname.toLowerCase().endsWith('.pdf')) {
+        return sendJson(res, 400, { error: 'Only PDF files are accepted.' })
+      }
+
+      // Use generateClientTokenFromReadWriteToken — works with raw Node HTTP,
+      // unlike handleUpload() which requires a Web API Request object.
+      const clientToken = await generateClientTokenFromReadWriteToken({
+        token: process.env.BLOB_READ_WRITE_TOKEN,
+        pathname,
+        onUploadCompleted: callbackUrl
+          ? { callbackUrl }
+          : {
+              // callbackUrl is required — use a noop endpoint since we clean up
+              // the blob ourselves in /api/compress after fetching it.
+              callbackUrl: `https://${process.env.VERCEL_URL || 'localhost'}/api/blob-noop`,
+            },
+        allowedContentTypes: ['application/pdf'],
+        maximumSizeInBytes: 50 * 1024 * 1024,
+      })
+
+      return sendJson(res, 200, { clientToken })
     }
 
-    // Generate a short-lived client upload token
-    // This does NOT require a Web API Request object — works with raw Node HTTP
-    const clientToken = await generateClientTokenFromReadWriteToken({
-      token: process.env.BLOB_READ_WRITE_TOKEN,
-      pathname: filename,
-      onUploadCompleted: {
-        // callbackUrl is required by the API but we don't need the callback —
-        // we handle cleanup in /api/compress after fetching the blob.
-        // Use a dummy URL that returns 200 (Vercel ignores non-2xx gracefully).
-        callbackUrl: `https://${process.env.VERCEL_URL || 'localhost'}/api/blob-noop`,
-      },
-      allowedContentTypes: ['application/pdf'],
-      // Token valid for 30 minutes — generous for large file uploads
-      maximumSizeInBytes: 50 * 1024 * 1024,
-    })
+    // Unknown request type
+    return sendJson(res, 400, { error: 'Unknown request type.' })
 
-    return sendJson(res, 200, { clientToken })
   } catch (err) {
-    console.error('[blob-upload] Error generating token:', err)
+    console.error('[blob-upload] Error:', err)
     return sendJson(res, 500, { error: err.message || 'Failed to generate upload token.' })
   }
 }
