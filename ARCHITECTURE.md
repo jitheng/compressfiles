@@ -1,31 +1,26 @@
 # PDF Compressor — Architecture & Code Reference
 
 ## Overview
-
-A production-ready, single-page web application that compresses PDF files in a
-Vercel serverless function and streams the result back to the browser for
-download. No files are stored; all processing is in-memory/temporary.
+Free online PDF compressor: React + Vite frontend → Vercel serverless API → MuPDF WASM re-render → compressed PDF download. No persistent storage. Live at https://compressfiles.vercel.app
 
 ---
 
-## High-Level Architecture
+## Architecture
 
 ```
 Browser (React + Vite)
-        │
-        │  POST /api/compress
-        │  multipart/form-data (file, level)
-        ▼
-Vercel Serverless Function  (/api/compress.js)
-        │
-        │  Engine 1: Ghostscript (gs -dPDFSETTINGS) — re-encodes images
-        │  Engine 2: MuPDF fallback (saveToBuffer compress,garbage=4)
-        │
-        ▼
-Response: application/pdf blob
-        │
-        ▼
-Browser: URL.createObjectURL → <a download> → auto-revoke after 60 s
+  │
+  │  Mode A — Vercel Blob (production, any file size):
+  │    1. POST /api/blob-upload  → token exchange (tiny request)
+  │    2. PUT  <vercel-blob-cdn> → browser uploads directly to CDN (bypasses 4.5 MB limit)
+  │    3. POST /api/compress     → { blobUrl, level, filename } (JSON, tiny)
+  │       function: fetch(blobUrl) → compress → del(blobUrl) → return PDF
+  │
+  │  Mode B — Legacy multipart (local dev / no BLOB_READ_WRITE_TOKEN set):
+  │    POST /api/compress  multipart/form-data  { file, level }  (≤4 MB)
+  │
+  ▼
+Response: application/pdf → triggerDownload() → transient <a>.click()
 ```
 
 ---
@@ -34,15 +29,17 @@ Browser: URL.createObjectURL → <a download> → auto-revoke after 60 s
 
 | Layer | Technology | Version |
 |---|---|---|
-| Frontend framework | React | 18 |
-| Build tool | Vite | 5 |
+| Frontend | React + Vite | 18 / 5 |
 | Styling | TailwindCSS | 3 |
 | File drop | react-dropzone | 14 |
 | HTTP client | axios | 1 |
+| Blob upload | @vercel/blob | 2 |
+| Analytics | @vercel/analytics | 1 |
 | Serverless runtime | Vercel Node.js | 20 |
-| PDF engine | pdf-lib | 1.17 |
+| PDF engine (primary) | Ghostscript (`gs` binary) | system |
+| PDF engine (fallback) | MuPDF WASM (`mupdf` npm) | 1.27 |
 | Form parsing | formidable | 3 |
-| Unit tests | Vitest + Testing Library | 2 / 16 |
+| Tests | Vitest + Testing Library | 2 / 16 |
 
 ---
 
@@ -50,144 +47,147 @@ Browser: URL.createObjectURL → <a download> → auto-revoke after 60 s
 
 ```
 PDF Compressor/
-│
 ├── api/
-│   ├── compress.js          ← Vercel serverless function (POST /api/compress)
-│   └── package.json         ← "type":"module" so api/ is treated as ESM
-│
+│   ├── compress.js       ← POST /api/compress — dual-mode (JSON blobUrl or multipart)
+│   ├── blob-upload.js    ← POST /api/blob-upload — Vercel Blob token exchange
+│   └── package.json      ← "type":"module" (required for ESM)
 ├── src/
-│   ├── main.jsx             ← React entry point
-│   ├── index.css            ← Tailwind directives + global utility classes
-│   ├── App.jsx              ← Shell: header, footer, mounts <Compressor>
-│   │
+│   ├── main.jsx          ← React entry + <Analytics />
+│   ├── index.css         ← Tailwind directives + custom classes
+│   ├── App.jsx           ← Shell: header, h1, Compressor, feature grid, FAQ, footer
 │   ├── components/
-│   │   ├── Compressor.jsx         ← Orchestrates full upload→compress→download flow
-│   │   ├── DropZone.jsx           ← react-dropzone wrapper (PDF only, 50 MB max)
-│   │   ├── CompressionLevelPicker.jsx  ← Low / Medium / High radio buttons
-│   │   ├── FileSizeDisplay.jsx    ← Before/after sizes + animated savings bar
-│   │   └── ProgressBar.jsx        ← Accessible progress indicator
-│   │
+│   │   ├── Compressor.jsx             ← Orchestrates flow; large-file advisory banner (>5 MB)
+│   │   ├── DropZone.jsx               ← Mobile-safe file picker (iOS + Android fixes)
+│   │   ├── CompressionLevelPicker.jsx ← Low / Medium / High radio buttons
+│   │   ├── FileSizeDisplay.jsx        ← Before/after sizes + savings bar
+│   │   └── ProgressBar.jsx            ← Accessible progress indicator
 │   ├── hooks/
-│   │   └── useCompress.js   ← State machine: idle→uploading→processing→done|error
-│   │
+│   │   └── useCompress.js  ← State machine + two-step Vercel Blob upload + triggerDownload
 │   └── test/
-│       ├── setup.js                       ← @testing-library/jest-dom import
-│       ├── FileSizeDisplay.test.jsx       ← formatBytes + render tests (10 tests)
-│       ├── CompressionLevelPicker.test.jsx ← selection + onChange + disabled (4 tests)
-│       ├── ProgressBar.test.jsx            ← ARIA + label tests (3 tests)
-│       └── useCompress.test.js            ← Hook lifecycle: done/error/reset (4 tests)
-│
+│       ├── setup.js
+│       ├── FileSizeDisplay.test.jsx        (10 tests)
+│       ├── CompressionLevelPicker.test.jsx  (4 tests)
+│       ├── ProgressBar.test.jsx             (3 tests)
+│       └── useCompress.test.js              (5 tests)
 ├── public/
-│   └── favicon.svg
-│
-├── index.html               ← Vite HTML entry
-├── package.json             ← Root (type:module, scripts, all deps)
-├── vite.config.js           ← Vite + Vitest config; /api proxy → localhost:3001
+│   ├── favicon.svg
+│   ├── robots.txt         ← Allow all + sitemap reference
+│   └── sitemap.xml        ← Single URL entry
+├── index.html             ← Full SEO head (title, OG, Twitter Card, JSON-LD, canonical)
+├── package.json
+├── vite.config.js         ← Vite + Vitest config; proxies /api → localhost:3001
 ├── tailwind.config.js
-├── postcss.config.js
-├── vercel.json              ← Vercel routing + function config
-├── server.dev.js            ← Local dev API server (mirrors Vercel function)
-├── .gitignore
-└── .env.example
+├── vercel.json            ← compress (60s/1024MB), blob-upload (10s/256MB)
+├── server.dev.js          ← Local HTTP server — /api/compress + /api/blob-upload
+├── .env.example           ← BLOB_READ_WRITE_TOKEN documentation
+├── ARCHITECTURE.md        ← This file
+└── CLAUDE.md              ← AI context file (gitignored)
 ```
 
 ---
 
-## Component Details
+## Compression Engines
 
-### `src/components/Compressor.jsx`
-Central orchestrator. Holds `file` and `level` state, calls `useCompress`, and
-conditionally renders the drop zone, level picker, progress bar, error state,
-and the done/download card.
+### Engine 1 — Ghostscript (local dev only, not on Vercel)
+```bash
+gs -dPDFSETTINGS=/printer|/ebook|/screen -sDEVICE=pdfwrite ...
+```
+Typical reduction: 50–90%. Auto-detected via `GS_CANDIDATES` path list.
 
-**State transitions rendered:**
+### Engine 2 — MuPDF WASM re-render (Vercel production — always available)
+Per-page pipeline in `compressWithMuPDF()`:
+1. `page.toPixmap(Matrix.scale(scale, scale), DeviceRGB, false)` → RGB Pixmap
+2. `pix.asJPEG(quality, false)` → JPEG Uint8Array; then `pix.destroy()` (free WASM heap)
+3. `outDoc.addRawStream(jpegBytes, imgDict)` — **buffer FIRST, dict second**
+4. `outDoc.addPage([0,0,w,h], 0, resources, contentStream)` → returns pageObj
+5. `outDoc.insertPage(-1, pageObj)` — **must call separately** (addPage alone does not insert)
+6. `outDoc.saveToBuffer('compress')` — **no `garbage=N`** (removes freshly added objects)
 
-| `status` | UI shown |
-|---|---|
-| `idle` | DropZone only |
-| `idle` + file selected | DropZone + file chip + level picker + Compress button |
-| `uploading` / `processing` | Progress bar + spinner button |
-| `done` | Download card with FileSizeDisplay |
-| `error` | Red error banner |
+**Level configuration:**
+| Level | JPEG quality | Render scale | GS setting | Approx. reduction |
+|-------|-------------|--------------|------------|-------------------|
+| low   | 85 | 1.5× | `/printer` | ~70% |
+| medium| 60 | 1.2× | `/ebook`   | ~85% |
+| high  | 35 | 1.0× | `/screen`  | ~90% |
 
-### `src/components/DropZone.jsx`
-Wraps `react-dropzone`. Accepts only `application/pdf`, max 50 MB. Shows
-animated border pulse when a file is dragged over. Passes validation errors to
-`window.alert`.
+---
 
-### `src/components/CompressionLevelPicker.jsx`
-Three `role="radio"` buttons. Each holds an emoji indicator, label, and
-description. Emits the chosen value via `onChange`. Fully disabled while
-compressing.
+## API Reference
 
-### `src/components/FileSizeDisplay.jsx`
-Displays original and compressed byte counts (formatted via `formatBytes`).
-Renders a green progress bar proportional to savings, and a badge showing
-percentage reduction. Exported `formatBytes` is unit-tested independently.
+### `POST /api/blob-upload`
+Vercel Blob client-upload token exchange.
+- **Request:** `application/json` with `{ type: "blob.generate-client-token", payload: { pathname, callbackUrl } }`
+- **Response (production):** Vercel Blob upload token (handled by `handleUpload`)
+- **Response (local / no token):** `{ localMode: true }` → client auto-falls back to multipart
+- **Config:** `maxDuration: 10`, `memory: 256`
 
-### `src/components/ProgressBar.jsx`
-Accessible `role="progressbar"` with `aria-valuenow`. Accepts a `label` prop
-for contextual text ("Uploading…" vs "Compressing…").
+### `POST /api/compress`
+**Mode A — Vercel Blob (production):**
+- **Request:** `application/json` `{ blobUrl, level, filename }`
+- Handler calls `fetch(blobUrl)`, compresses, `del(blobUrl)`, returns PDF
+
+**Mode B — Multipart (local dev):**
+- **Request:** `multipart/form-data` `{ file, level }`
+
+**Both modes respond:**
+- `200 application/pdf` + headers: `X-Original-Size`, `X-Compressed-Size`, `X-Engine`, `Content-Disposition`
+- `400` bad input | `413` too large | `500` compression error
+- **Config:** `maxDuration: 60`, `memory: 1024`, `sizeLimit: '50mb'`, `responseLimit: '50mb'`
 
 ---
 
 ## Hook: `src/hooks/useCompress.js`
 
-```
-compress(file, level)
-  → reset()                          clears previous state
-  → setStatus('uploading')
-  → axios.post('/api/compress', formData, { onUploadProgress, onDownloadProgress })
-      upload progress   → 10–50%
-      download progress → 55–95%
-  → setStatus('processing')          97%
-  → URL.createObjectURL(blob)        stored in ref for cleanup
-  → setStatus('done')                100%
+States: `idle → uploading → processing → done | error`
 
-reset()
-  → URL.revokeObjectURL(blobUrlRef)  free memory
-  → all state back to defaults
 ```
+compress(file, level):
+  1. POST /api/blob-upload (mode check)
+     → { localMode: true }  → Mode B: FormData → POST /api/compress
+     → token               → Mode A: upload(file) to CDN → POST /api/compress { blobUrl }
+  2. Both paths: responseType:'blob', timeout:60_000
+     onDownloadProgress: pulse +3 up to 80% if evt.total is missing (Vercel chunked)
+  3. URL.createObjectURL(blob) → setStatus('done')
 
-Progress percentages are split: 10–50% upload, 55–95% download, 97–100% local
-object URL creation.
+triggerDownload():
+  Creates transient <a>, appends to body, .click(), removes after 60s
+  Required for Android Chrome (ignores <a download> on static DOM anchors)
+
+reset():
+  URL.revokeObjectURL → clear all state
+```
 
 ---
 
-## API: `api/compress.js`
+## Mobile Fixes Summary
 
-**Route:** `POST /api/compress`
+| Issue | Root cause | Fix | File |
+|-------|-----------|-----|------|
+| File picker doesn't open on iOS | JS `.click()` blocked by user-gesture guard | `<label htmlFor>` as tap target; `noClick:true` on dropzone | DropZone.jsx |
+| 300ms tap delay | Default browser behaviour | `touch-manipulation` class | DropZone.jsx |
+| File picker broken on Android | `e.preventDefault()` on label breaks `htmlFor` | Removed `preventDefault`; `.click()` is safety-net only | DropZone.jsx |
+| Blank screen after upload (Android) | `<a download>` ignored on static DOM anchor | `triggerDownload()` — fresh transient anchor per user gesture | useCompress.js / Compressor.jsx |
+| Progress bar freezes | Vercel uses chunked transfer — no `Content-Length` | Pulse fallback: `progress += 3` up to 80% | useCompress.js |
 
-**Request:** `multipart/form-data`
-- `file` — PDF binary (required, max 50 MB)
-- `level` — `"low"` | `"medium"` | `"high"` (optional, default `"medium"`)
+---
 
-**Response (success):**
-- `200 application/pdf`
-- Headers: `X-Original-Size`, `X-Compressed-Size`, `Content-Disposition`
+## SEO Implementation
 
-**Response (error):**
-- `400` — no file, wrong type
-- `413` — file exceeds 50 MB
-- `500` — pdf-lib error, encrypted PDF, etc.
+**`index.html`:**
+- `<title>` with primary keywords
+- `<meta name="description/keywords/robots">`
+- Canonical URL
+- Open Graph (`og:title`, `og:description`, `og:image`, `og:url`, `og:type`)
+- Twitter Card (`summary_large_image`)
+- JSON-LD `WebApplication` schema with `featureList` and free `Offer`
+- `theme-color` for mobile browser chrome
 
-**Compression logic (`compressPdf`):**
+**`src/App.jsx`:**
+- `<h1>` with keyword-rich copy (upgraded from `<h2>`)
+- 3-column feature grid (size reduction, privacy, device support)
+- FAQ prose section for long-tail keyword signals
 
-```js
-PDFDocument.load(buffer)           // parse existing PDF
-PDFDocument.save({
-  useObjectStreams: true,           // compress object streams
-  objectsPerTick: 10|20|50         // high/medium/low trade-off
-})
-```
-
-`objectsPerTick` controls how many PDF objects are serialised per event-loop
-tick. Smaller values = slower but slightly better deduplication for large files.
-
-**Temp file cleanup:**
-`formidable` writes uploads to OS `/tmp`. The handler calls `unlinkSync(tmpPath)`
-immediately after reading the buffer — and again in the `catch` block to handle
-errors. Files never persist beyond the function invocation.
+**`public/robots.txt`** + **`public/sitemap.xml`**
 
 ---
 
@@ -195,87 +195,95 @@ errors. Files never persist beyond the function invocation.
 
 ```json
 {
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
   "functions": {
-    "api/compress.js": {
-      "maxDuration": 60,   // seconds — allows large PDF processing
-      "memory": 1024       // MB
-    }
-  }
+    "api/compress.js":    { "maxDuration": 60, "memory": 1024 },
+    "api/blob-upload.js": { "maxDuration": 10, "memory": 256  }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
 ```
 
-Routes: `/api/*` → serverless functions; `/*` → `index.html` (SPA fallback).
+**Vercel Hobby plan hard limits (cannot be changed by config):**
+- Request body: **4.5 MB** — why Vercel Blob is required for larger files
+- Memory: 1024 MB max (3008 MB would fail deployment)
+- Duration: 60s max
 
 ---
 
 ## Local Development
 
 ```bash
-# Install dependencies
 npm install
-
-# Start both servers concurrently
-npm run dev:all
-
-# Or individually:
-node server.dev.js      # API on :3001
-npm run dev             # Vite on :5173 (proxies /api → :3001)
+# Optional: copy BLOB_READ_WRITE_TOKEN to .env.local for blob mode
+npm run dev:all    # Vite :5173 + API :3001 concurrently
+# Or separately:
+node server.dev.js   # API on :3001
+npm run dev          # Vite on :5173
 ```
 
-Vite proxy config in `vite.config.js`:
+Without `BLOB_READ_WRITE_TOKEN`, the app uses Mode B (multipart) automatically — works fine for files ≤4 MB.
+
+---
+
+## Tests (22 total)
+
+```bash
+npm test           # run once
+npm run test:watch # watch mode
+```
+
+| File | Count | What's tested |
+|------|-------|---------------|
+| FileSizeDisplay.test.jsx | 10 | `formatBytes` edge cases, render, savings bar |
+| CompressionLevelPicker.test.jsx | 4 | selection, onChange, disabled |
+| ProgressBar.test.jsx | 3 | ARIA attributes, label, percentage |
+| useCompress.test.js | 5 | idle, done (2-call mock), error, reset, triggerDownload |
+
+**Test pattern for useCompress** — `axios.post` is called twice per `compress()` invocation:
 ```js
-server: {
-  proxy: {
-    '/api': { target: 'http://localhost:3001', changeOrigin: true }
-  }
-}
+vi.mock('@vercel/blob/client', () => ({ upload: vi.fn() }))
+axios.post
+  .mockResolvedValueOnce({ data: { localMode: true } })        // call 1: blob-upload check
+  .mockResolvedValueOnce({ data: pdfBlob, headers: {...} })    // call 2: /api/compress
 ```
 
 ---
 
-## Testing
+## Git Branch History (newest → oldest)
 
-```bash
-npm test              # run once
-npm run test:watch    # watch mode
-```
+| Branch | Change |
+|--------|--------|
+| `feat/vercel-blob` | Vercel Blob two-step upload — bypasses 4.5 MB limit |
+| `fix/large-file-upload` | `sizeLimit:'50mb'`, `pix.destroy()`, better error messages |
+| `fix/mobile-blank-screen` | `triggerDownload()`, remove `preventDefault`, progress pulse |
+| `feat/analytics` | `@vercel/analytics` injected in main.jsx |
+| `feat/seo` | OG/Twitter/JSON-LD/robots/sitemap, feature grid, FAQ section |
+| `fix/mobile-upload` | iOS/Android file picker fixes (label, noClick, touch-manipulation) |
+| `fix/compression-engine` | MuPDF JPEG re-render pipeline (replaced pdf-lib) |
 
-**21 tests across 4 files:**
-
-| File | Tests | What's covered |
-|---|---|---|
-| `FileSizeDisplay.test.jsx` | 10 | `formatBytes` edge cases, render, savings bar visibility |
-| `CompressionLevelPicker.test.jsx` | 4 | selection state, `onChange`, disabled mode |
-| `ProgressBar.test.jsx` | 3 | ARIA attributes, label text, percentage display |
-| `useCompress.test.js` | 4 | idle state, success flow, error flow, reset |
-
-axios is mocked via `vi.mock('axios')`. `URL.createObjectURL` / `revokeObjectURL`
-are stubbed since jsdom doesn't implement them.
+Git flow: `fix/feat branch → dev → staging → main → vercel --prod`
 
 ---
 
-## Deployment to Vercel
+## Environment Variables
 
-```bash
-# One-time setup
-npm i -g vercel
-vercel login
+| Var | Required for | Where to set |
+|-----|-------------|--------------|
+| `BLOB_READ_WRITE_TOKEN` | Files >4.5 MB in production | Vercel dashboard → Project → Settings → Environment Variables |
 
-# Deploy
-vercel --prod
-```
-
-No environment variables required for MVP. Vercel auto-detects the
-`@vercel/static-build` + `@vercel/node` setup from `vercel.json`.
+Local: add to `.env.local` (gitignored). Get from Vercel dashboard → Storage → Blob store → `.env.local` tab.
 
 ---
 
-## Known Limitations & V2 Ideas
+## Known Limitations
 
-| Item | Notes |
-|---|---|
-| **Compression ratio** | pdf-lib re-serialises but doesn't re-encode images. Ghostscript (`gs -dPDFSETTINGS=/screen`) achieves 60–80% reduction on image-heavy PDFs. Swap `compressPdf` for a GS child_process call on a server/container. |
-| **Encrypted PDFs** | pdf-lib throws on password-protected files. Detected and surfaced as a user-friendly error. |
-| **50 MB limit** | Set in both formidable (`maxFileSize`) and the drop zone. Raise both to increase. |
-| **No analytics** | Add Vercel Analytics (`@vercel/analytics`) with one import line. |
-| **Batch processing** | V2: accept multiple files, compress in parallel, return a zip. |
+| Item | Detail |
+|------|--------|
+| Vercel Blob required for large files | Must create Blob store + set `BLOB_READ_WRITE_TOKEN` — one-time setup |
+| WASM heap limit | Files >30 MB with many pages may OOM at Low compression — recommend High |
+| Vercel 60s timeout | Very large files on Low compression may timeout |
+| Text-only PDFs | Re-render increases size — original returned if output > input |
+| Encrypted PDFs | MuPDF throws — surfaced as user-friendly error message |
