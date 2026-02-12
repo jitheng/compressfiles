@@ -22,11 +22,13 @@ vi.spyOn(document.body, 'removeChild').mockImplementation(() => {})
 /**
  * axios.post is called twice in compress():
  *   call 1: /api/blob-upload mode-check  → { localMode: true }  (triggers multipart fallback)
+ *            server returns { localMode: true } when BLOB_READ_WRITE_TOKEN not set
+ *            (no clientToken → useBlob=false → Mode B: multipart)
  *   call 2: /api/compress multipart      → { data: pdfBlob, headers: {...} }
  */
 function mockCompressSuccess(pdfBlob, compressedSize = '1000') {
   axios.post
-    .mockResolvedValueOnce({ data: { localMode: true } })   // blob-upload mode check
+    .mockResolvedValueOnce({ data: { localMode: true } })   // blob-upload: no token → localMode
     .mockResolvedValueOnce({                                 // /api/compress response
       data: pdfBlob,
       headers: { 'x-compressed-size': compressedSize },
