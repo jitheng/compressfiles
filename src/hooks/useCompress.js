@@ -19,8 +19,10 @@ import { upload } from '@vercel/blob/client'
  *     POST /api/compress  multipart/form-data  { file, level }
  *     Works for files ≤ ~4 MB on local Node server.
  *
- * The mode is determined by calling GET /api/blob-upload first. If the server
- * returns { localMode: true }, Mode B is used; otherwise Mode A proceeds.
+ * Mode is determined by probing /api/blob-upload with the handleUploadUrl
+ * wire-protocol request. If the server returns { localMode: true } (no token
+ * configured), Mode B is used. Otherwise Mode A proceeds with handleUploadUrl
+ * pointing at /api/blob-upload which uses generateClientTokenFromReadWriteToken.
  */
 export function useCompress() {
   const [status, setStatus]           = useState('idle')
@@ -82,20 +84,18 @@ export function useCompress() {
 
     try {
       // ── Check if Blob upload is available ─────────────────────────────
-      // POST { filename } to /api/blob-upload:
-      //   → { clientToken } if BLOB_READ_WRITE_TOKEN is set (production)
-      //   → { localMode: true } if not set (local dev) → fall back to multipart
+      // Probe /api/blob-upload with the handleUploadUrl wire-protocol request.
+      // Server returns { localMode: true } when BLOB_READ_WRITE_TOKEN is not set
+      // (local dev) → fall back to multipart.
+      // In production it responds with { clientToken } via
+      // generateClientTokenFromReadWriteToken (works with raw Node HTTP).
       let useBlob = false
-      let clientToken = null
       try {
         const modeCheck = await axios.post('/api/blob-upload',
-          JSON.stringify({ filename: file.name }),
+          JSON.stringify({ type: 'blob.generate-client-token', payload: { pathname: file.name, callbackUrl: '' } }),
           { headers: { 'Content-Type': 'application/json' }, timeout: 5_000 }
         )
-        if (modeCheck.data?.clientToken) {
-          clientToken = modeCheck.data.clientToken
-          useBlob = true
-        }
+        useBlob = !modeCheck.data?.localMode
       } catch {
         useBlob = false
       }
@@ -103,14 +103,16 @@ export function useCompress() {
       let inputForCompress   // { blobUrl, filename } or FormData
       let useJsonMode = false
 
-      if (useBlob && clientToken) {
+      if (useBlob) {
         // ── Mode A: Vercel Blob client upload ─────────────────────────
         setProgress(10)
 
-        // Upload file directly from browser to Vercel Blob CDN using pre-issued clientToken
+        // Upload file directly from browser to Vercel Blob CDN.
+        // handleUploadUrl sends the generate-client-token request to our
+        // /api/blob-upload handler which uses generateClientTokenFromReadWriteToken.
         const newBlob = await upload(file.name, file, {
           access: 'public',
-          clientUploadToken: clientToken,
+          handleUploadUrl: '/api/blob-upload',
           onUploadProgress: ({ percentage }) => {
             // Scale blob upload progress to 10–50%
             setProgress(Math.round(percentage * 0.4) + 10)
