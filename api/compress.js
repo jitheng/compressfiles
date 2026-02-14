@@ -41,6 +41,26 @@ import { randomBytes } from 'crypto'
 import * as mupdf from 'mupdf'
 import path from 'path'
 import { del } from '@vercel/blob'
+import https from 'https'
+
+/**
+ * Fetch a blob URL as a Buffer using Node's built-in https module.
+ * Avoids issues with native fetch / undici in Vercel serverless environments.
+ */
+function fetchBlobAsBuffer(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { timeout: 30_000 }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume()
+        return reject(new Error(`Failed to fetch blob: HTTP ${res.statusCode} ${res.statusMessage}`))
+      }
+      const chunks = []
+      res.on('data', (chunk) => chunks.push(chunk))
+      res.on('end', () => resolve(Buffer.concat(chunks)))
+      res.on('error', reject)
+    }).on('error', reject).on('timeout', () => reject(new Error('Blob fetch timed out')))
+  })
+}
 
 /**
  * Dual-mode handler:
@@ -252,12 +272,10 @@ export default async function handler(req, res) {
       const ext = path.extname(originalFilename).toLowerCase()
       if (ext !== '.pdf') return sendJson(res, 400, { error: 'Only PDF files are accepted.' })
 
-      // Fetch the PDF from Vercel Blob CDN (fast — same Vercel network)
+      // Fetch the PDF from Vercel Blob CDN using Node https module
+      // (native fetch / undici can throw "fetch failed" on Vercel serverless)
       console.log(`[compress] Fetching blob: ${blobUrl}`)
-      const fetchRes = await fetch(blobUrl)
-      console.log(`[compress] Blob fetch status: ${fetchRes.status}, content-type: ${fetchRes.headers.get('content-type')}, content-length: ${fetchRes.headers.get('content-length')}`)
-      if (!fetchRes.ok) throw new Error(`Failed to fetch blob: HTTP ${fetchRes.status} ${fetchRes.statusText}`)
-      inputBuffer = Buffer.from(await fetchRes.arrayBuffer())
+      inputBuffer = await fetchBlobAsBuffer(blobUrl)
       console.log(`[compress] Blob buffer size: ${inputBuffer.length} bytes`)
 
     } else {
