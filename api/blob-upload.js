@@ -72,7 +72,7 @@ export default async function handler(req, res) {
     // Handle the handleUploadUrl wire protocol:
     // upload() sends { type: 'blob.generate-client-token', payload: { pathname, callbackUrl } }
     if (body.type === 'blob.generate-client-token') {
-      const { pathname, callbackUrl } = body.payload || {}
+      const { pathname, callbackUrl, multipart } = body.payload || {}
 
       if (!pathname || !pathname.toLowerCase().endsWith('.pdf')) {
         return sendJson(res, 400, { error: 'Only PDF files are accepted.' })
@@ -87,11 +87,18 @@ export default async function handler(req, res) {
       // leaving the blob object in a pending/unconfirmed state that resolves
       // as HTTP 404 when compress.js tries to fetch it immediately after upload.
       // Only set onUploadCompleted when the client provides a real callbackUrl.
+      //
+      // validUntil: set to 1 hour (matching handleUpload default) — the default
+      // in generateClientTokenFromReadWriteToken is only 30 seconds which is too
+      // short for large file uploads on slow connections.
+      const oneHour = Date.now() + 60 * 60 * 1000
       const tokenOptions = {
         token: process.env.BLOB_READ_WRITE_TOKEN,
         pathname,
         allowedContentTypes: ['application/pdf'],
         maximumSizeInBytes: 50 * 1024 * 1024,
+        validUntil: oneHour,
+        ...(multipart !== undefined ? { multipart } : {}),
       }
       if (callbackUrl) {
         tokenOptions.onUploadCompleted = { callbackUrl }
