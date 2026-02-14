@@ -62,13 +62,6 @@ export default async function handler(req, res) {
     for await (const chunk of req) chunks.push(chunk)
     const body = JSON.parse(Buffer.concat(chunks).toString())
 
-    // Mode-check probe from useCompress.js — just confirm blob mode is available.
-    // Handled separately so the probe does NOT generate a real client token,
-    // which would create a stale/conflicting pending upload slot on the CDN.
-    if (body.type === 'mode-check') {
-      return sendJson(res, 200, { blobMode: true })
-    }
-
     // Handle the handleUploadUrl wire protocol:
     // upload() sends { type: 'blob.generate-client-token', payload: { pathname, callbackUrl } }
     if (body.type === 'blob.generate-client-token') {
@@ -81,30 +74,26 @@ export default async function handler(req, res) {
       // Use generateClientTokenFromReadWriteToken — works with raw Node HTTP,
       // unlike handleUpload() which requires a Web API Request object.
       //
-      // IMPORTANT: Do NOT fabricate a callbackUrl using VERCEL_URL.
-      // VERCEL_URL points to the deployment preview URL which has Vercel SSO
-      // protection — Vercel's callback POST gets a 401/302 instead of 200,
-      // leaving the blob object in a pending/unconfirmed state that resolves
-      // as HTTP 404 when compress.js tries to fetch it immediately after upload.
-      // Only set onUploadCompleted when the client provides a real callbackUrl.
+      // onUploadCompleted + callbackUrl is REQUIRED for Vercel Blob to mark
+      // the uploaded object as confirmed/ready. Without it the blob stays in
+      // a pending state and returns HTTP 404 when fetched immediately after upload.
       //
-      // validUntil: set to 1 hour (matching handleUpload default) — the default
-      // in generateClientTokenFromReadWriteToken is only 30 seconds which is too
-      // short for large file uploads on slow connections.
+      // Use the client-supplied callbackUrl if present; otherwise use the
+      // hardcoded production domain. NEVER use VERCEL_URL — that points to the
+      // deployment preview URL which has Vercel SSO protection (returns 401/302).
+      //
+      // validUntil: 1 hour (default is only 30s — too short for large uploads).
+      const noopUrl = `https://compressfiles.online/api/blob-noop`
       const oneHour = Date.now() + 60 * 60 * 1000
-      const tokenOptions = {
+      const clientToken = await generateClientTokenFromReadWriteToken({
         token: process.env.BLOB_READ_WRITE_TOKEN,
         pathname,
         allowedContentTypes: ['application/pdf'],
         maximumSizeInBytes: 50 * 1024 * 1024,
         validUntil: oneHour,
         ...(multipart !== undefined ? { multipart } : {}),
-      }
-      if (callbackUrl) {
-        tokenOptions.onUploadCompleted = { callbackUrl }
-      }
-
-      const clientToken = await generateClientTokenFromReadWriteToken(tokenOptions)
+        onUploadCompleted: { callbackUrl: callbackUrl || noopUrl },
+      })
 
       return sendJson(res, 200, { clientToken })
     }
