@@ -45,21 +45,43 @@ import https from 'https'
 
 /**
  * Fetch a blob URL as a Buffer using Node's built-in https module.
+ * Retries up to 3 times with 1-second delay to handle CDN propagation lag.
  * Avoids issues with native fetch / undici in Vercel serverless environments.
  */
-function fetchBlobAsBuffer(url) {
+function fetchBlobAsBufferOnce(url) {
   return new Promise((resolve, reject) => {
     https.get(url, { timeout: 30_000 }, (res) => {
       if (res.statusCode !== 200) {
         res.resume()
-        return reject(new Error(`Failed to fetch blob: HTTP ${res.statusCode} ${res.statusMessage}`))
+        return reject(new Error(`HTTP ${res.statusCode} ${res.statusMessage}`))
       }
       const chunks = []
       res.on('data', (chunk) => chunks.push(chunk))
       res.on('end', () => resolve(Buffer.concat(chunks)))
       res.on('error', reject)
-    }).on('error', reject).on('timeout', () => reject(new Error('Blob fetch timed out')))
+    }).on('error', reject).on('timeout', () => reject(new Error('timeout')))
   })
+}
+
+async function fetchBlobAsBuffer(url) {
+  const maxAttempts = 4
+  const delayMs = 1500
+  let lastErr
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      if (attempt > 1) {
+        console.log(`[compress] Blob fetch attempt ${attempt}/${maxAttempts}: ${url}`)
+        await new Promise(r => setTimeout(r, delayMs))
+      }
+      const buf = await fetchBlobAsBufferOnce(url)
+      if (attempt > 1) console.log(`[compress] Blob fetch succeeded on attempt ${attempt}`)
+      return buf
+    } catch (err) {
+      lastErr = err
+      console.log(`[compress] Blob fetch attempt ${attempt} failed: ${err.message}`)
+    }
+  }
+  throw new Error(`Failed to fetch blob after ${maxAttempts} attempts: ${lastErr.message}`)
 }
 
 /**
