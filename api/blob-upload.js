@@ -73,19 +73,24 @@ export default async function handler(req, res) {
 
       // Use generateClientTokenFromReadWriteToken — works with raw Node HTTP,
       // unlike handleUpload() which requires a Web API Request object.
-      const clientToken = await generateClientTokenFromReadWriteToken({
+      //
+      // IMPORTANT: Do NOT fabricate a callbackUrl using VERCEL_URL.
+      // VERCEL_URL points to the deployment preview URL which has Vercel SSO
+      // protection — Vercel's callback POST gets a 401/302 instead of 200,
+      // leaving the blob object in a pending/unconfirmed state that resolves
+      // as HTTP 404 when compress.js tries to fetch it immediately after upload.
+      // Only set onUploadCompleted when the client provides a real callbackUrl.
+      const tokenOptions = {
         token: process.env.BLOB_READ_WRITE_TOKEN,
         pathname,
-        onUploadCompleted: callbackUrl
-          ? { callbackUrl }
-          : {
-              // callbackUrl is required — use a noop endpoint since we clean up
-              // the blob ourselves in /api/compress after fetching it.
-              callbackUrl: `https://${process.env.VERCEL_URL || 'localhost'}/api/blob-noop`,
-            },
         allowedContentTypes: ['application/pdf'],
         maximumSizeInBytes: 50 * 1024 * 1024,
-      })
+      }
+      if (callbackUrl) {
+        tokenOptions.onUploadCompleted = { callbackUrl }
+      }
+
+      const clientToken = await generateClientTokenFromReadWriteToken(tokenOptions)
 
       return sendJson(res, 200, { clientToken })
     }
