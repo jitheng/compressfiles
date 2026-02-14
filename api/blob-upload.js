@@ -62,6 +62,13 @@ export default async function handler(req, res) {
     for await (const chunk of req) chunks.push(chunk)
     const body = JSON.parse(Buffer.concat(chunks).toString())
 
+    // Mode-check probe from useCompress.js — just confirm blob mode is available.
+    // Handled separately so the probe does NOT generate a real client token,
+    // which would create a stale/conflicting pending upload slot on the CDN.
+    if (body.type === 'mode-check') {
+      return sendJson(res, 200, { blobMode: true })
+    }
+
     // Handle the handleUploadUrl wire protocol:
     // upload() sends { type: 'blob.generate-client-token', payload: { pathname, callbackUrl } }
     if (body.type === 'blob.generate-client-token') {
