@@ -1,9 +1,15 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import DropZone from './DropZone'
 import CompressionLevelPicker from './CompressionLevelPicker'
 import FileSizeDisplay from './FileSizeDisplay'
 import ProgressBar from './ProgressBar'
 import { useCompress } from '../hooks/useCompress'
+import {
+  trackFileUploaded,
+  trackCompressionStarted,
+  trackCompressionSuccess,
+  trackDownloadClicked,
+} from '../utils/analytics'
 
 export default function Compressor() {
   const [file, setFile] = useState(null)
@@ -26,12 +32,16 @@ export default function Compressor() {
     (f) => {
       setFile(f)
       reset()
+      // GA4: file selected
+      trackFileUploaded({ file_size_bytes: f.size, file_name: f.name })
     },
     [reset],
   )
 
   const handleCompress = useCallback(() => {
     if (!file) return
+    // GA4: compression started
+    trackCompressionStarted({ compression_level: level, file_size_bytes: file.size })
     compress(file, level)
   }, [file, level, compress])
 
@@ -44,6 +54,17 @@ export default function Compressor() {
   const isBusy = status === 'uploading' || status === 'processing'
   const isDone = status === 'done'
   const isError = status === 'error'
+
+  // GA4: compression success (conversion event) — fires once when status → done
+  useEffect(() => {
+    if (isDone && originalSize && compressedSize) {
+      trackCompressionSuccess({
+        original_size_bytes: originalSize,
+        compressed_size_bytes: compressedSize,
+        compression_level: level,
+      })
+    }
+  }, [isDone]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
@@ -176,7 +197,14 @@ export default function Compressor() {
             <button
               className="btn-primary flex-1 py-3 text-base"
               data-testid="download-btn"
-              onClick={triggerDownload}
+              onClick={() => {
+                // GA4: download clicked (conversion event)
+                trackDownloadClicked({
+                  compressed_size_bytes: compressedSize || 0,
+                  compression_level: level,
+                })
+                triggerDownload()
+              }}
             >
               <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
