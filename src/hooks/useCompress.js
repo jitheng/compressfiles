@@ -84,18 +84,18 @@ export function useCompress() {
 
     try {
       // ── Check if Blob upload is available ─────────────────────────────
-      // Send a lightweight mode-check probe (NOT the full wire protocol).
-      // Using mode-check avoids generating a real client token here, which
-      // would create a stale pending upload slot on the CDN before the real
-      // upload() call generates its own token. Server returns { localMode: true }
-      // when BLOB_READ_WRITE_TOKEN is not set (local dev) → fall back to multipart.
+      // Probe /api/blob-upload with the wire-protocol request format.
+      // Server returns { localMode: true } when BLOB_READ_WRITE_TOKEN is not set
+      // (local dev) → fall back to multipart.
+      // In production it responds with { clientToken } via
+      // generateClientTokenFromReadWriteToken (works with raw Node HTTP).
       let useBlob = false
       try {
         const modeCheck = await axios.post('/api/blob-upload',
-          JSON.stringify({ type: 'mode-check' }),
+          JSON.stringify({ type: 'blob.generate-client-token', payload: { pathname: file.name, callbackUrl: '' } }),
           { headers: { 'Content-Type': 'application/json' }, timeout: 5_000 }
         )
-        useBlob = modeCheck.data?.blobMode === true
+        useBlob = !modeCheck.data?.localMode
       } catch {
         useBlob = false
       }
