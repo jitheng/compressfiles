@@ -253,9 +253,12 @@ export default async function handler(req, res) {
       if (ext !== '.pdf') return sendJson(res, 400, { error: 'Only PDF files are accepted.' })
 
       // Fetch the PDF from Vercel Blob CDN (fast — same Vercel network)
+      console.log(`[compress] Fetching blob: ${blobUrl}`)
       const fetchRes = await fetch(blobUrl)
-      if (!fetchRes.ok) throw new Error(`Failed to fetch blob: ${fetchRes.status}`)
+      console.log(`[compress] Blob fetch status: ${fetchRes.status}, content-type: ${fetchRes.headers.get('content-type')}, content-length: ${fetchRes.headers.get('content-length')}`)
+      if (!fetchRes.ok) throw new Error(`Failed to fetch blob: HTTP ${fetchRes.status} ${fetchRes.statusText}`)
       inputBuffer = Buffer.from(await fetchRes.arrayBuffer())
+      console.log(`[compress] Blob buffer size: ${inputBuffer.length} bytes`)
 
     } else {
       // ── Mode B: Legacy multipart (local dev / small files ≤4.5 MB) ─────
@@ -285,14 +288,18 @@ export default async function handler(req, res) {
     let compressedBuffer
     let engine
 
+    console.log(`[compress] Input: ${inputBuffer.length} bytes, level: ${level}`)
     const gs = await findGhostscript()
     if (gs) {
+      console.log(`[compress] Using Ghostscript: ${gs}`)
       compressedBuffer = await compressWithGhostscript(gs, inputBuffer, level)
       engine = 'ghostscript'
     } else {
+      console.log(`[compress] Using MuPDF WASM`)
       compressedBuffer = compressWithMuPDF(inputBuffer, level)
       engine = 'mupdf'
     }
+    console.log(`[compress] Output: ${compressedBuffer.length} bytes (engine: ${engine})`)
 
     // Return original if compression made it larger
     if (compressedBuffer.length >= inputBuffer.length) {
@@ -329,11 +336,16 @@ export default async function handler(req, res) {
 
     const is413 = err.code === 'LIMIT_FILE_SIZE' || err.statusCode === 413 || err.status === 413
     const statusCode = is413 ? 413 : 500
+    const msg = err.message || ''
     const message =
-      is413                                ? 'File too large. Maximum upload size is 50 MB.'
-      : err.message?.includes('encrypted') ? 'Encrypted PDFs are not supported. Please remove the password first.'
-      : err.message?.includes('timeout')   ? 'Compression timed out. Please try the High compression level for large files.'
-      : 'Failed to compress the PDF. The file may be corrupted or unsupported.'
+      is413                            ? 'File too large. Maximum upload size is 50 MB.'
+      : msg.includes('encrypted') ||
+        msg.includes('password')       ? 'Encrypted PDFs are not supported. Please remove the password first.'
+      : msg.includes('timeout')        ? 'Compression timed out. Please try the High compression level for large files.'
+      : msg.includes('Failed to fetch blob') ? `Could not retrieve uploaded file: ${msg}`
+      : msg.includes('corrupt') ||
+        msg.includes('repair')         ? 'The PDF appears to be corrupted or uses an unsupported format.'
+      : `Compression failed: ${msg}`   // surface actual error in production logs
 
     return sendJson(res, statusCode, { error: message })
   }
