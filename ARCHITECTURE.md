@@ -252,9 +252,10 @@ Use `generateClientTokenFromReadWriteToken` from `@vercel/blob/client` for raw N
 
 | Issue | Root cause | Fix | File |
 |-------|-----------|-----|------|
+| File picker requires multiple taps on iOS/Android | `handleLabelClick` called `inputRef.current?.click()` alongside native `htmlFor` — two concurrent picker-open requests; browser silently drops the selection | Removed all programmatic `.click()` from label. `<label htmlFor>` native association is the sole tap trigger. **DO NOT add onClick back.** | DropZone.jsx |
 | File picker doesn't open on iOS | JS `.click()` blocked by user-gesture guard | `<label htmlFor>` as tap target; `noClick:true` on dropzone | DropZone.jsx |
-| 300ms tap delay | Default browser behaviour | `touch-manipulation` class | DropZone.jsx |
-| File picker broken on Android | `e.preventDefault()` on label breaks `htmlFor` | Removed `preventDefault`; `.click()` is safety-net only | DropZone.jsx |
+| 300ms tap delay | Default browser behaviour | `touch-manipulation` class on outer div and label | DropZone.jsx |
+| File picker broken on Android | `e.preventDefault()` on label breaks `htmlFor` | Removed `preventDefault` from label entirely | DropZone.jsx |
 | Blank screen after upload (Android) | `<a download>` ignored on static DOM anchor | `triggerDownload()` — fresh transient anchor per user gesture | useCompress.js / Compressor.jsx |
 | Progress bar freezes | Vercel uses chunked transfer — no `Content-Length` | Pulse fallback: `progress += 3` up to 80% | useCompress.js |
 
@@ -331,6 +332,7 @@ axios.post
 
 | Branch | Change |
 |--------|--------|
+| `main` (direct) | Fix DropZone double-open: remove `handleLabelClick` / `inputRef.current?.click()` from label |
 | `main` (direct) | Fix blob 404: `addRandomSuffix: true` + revert to `fetch()` for blob retrieval |
 | `fix/large-file-v2` | Fix blob wire protocol: `generateClientTokenFromReadWriteToken` + `https.get` (later reverted) |
 | `feat/ga4-seo-schema` | GA4 tracking, 5 SEO pages, SoftwareApplication + FAQ schema |
