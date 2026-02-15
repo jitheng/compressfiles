@@ -91,6 +91,7 @@ export default async function handler(req, res) {
         allowedContentTypes: ['application/pdf'],
         maximumSizeInBytes: 50 * 1024 * 1024,
         validUntil: oneHour,
+        addRandomSuffix: true,  // prevents CDN 404-cache collisions when same filename re-uploaded
         ...(multipart !== undefined ? { multipart } : {}),
         onUploadCompleted: { callbackUrl: callbackUrl || noopUrl },
       })

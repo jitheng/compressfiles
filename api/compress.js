@@ -41,28 +41,15 @@ import { randomBytes } from 'crypto'
 import * as mupdf from 'mupdf'
 import path from 'path'
 import { del } from '@vercel/blob'
-import https from 'https'
 
 /**
- * Fetch a blob URL as a Buffer using Node's built-in https module.
- * Retries up to 3 times with 1-second delay to handle CDN propagation lag.
- * Avoids issues with native fetch / undici in Vercel serverless environments.
+ * Fetch a blob URL as a Buffer using native fetch (undici).
+ * Retries up to 4 times with 1.5s delay to handle CDN propagation lag.
+ *
+ * NOTE: native fetch works reliably in Vercel serverless for Blob CDN URLs.
+ * https.get was tried but returns HTTP 404 for some large blobs even when
+ * fetch() successfully retrieves the same URL — do NOT switch back to https.get.
  */
-function fetchBlobAsBufferOnce(url) {
-  return new Promise((resolve, reject) => {
-    https.get(url, { timeout: 30_000 }, (res) => {
-      if (res.statusCode !== 200) {
-        res.resume()
-        return reject(new Error(`HTTP ${res.statusCode} ${res.statusMessage}`))
-      }
-      const chunks = []
-      res.on('data', (chunk) => chunks.push(chunk))
-      res.on('end', () => resolve(Buffer.concat(chunks)))
-      res.on('error', reject)
-    }).on('error', reject).on('timeout', () => reject(new Error('timeout')))
-  })
-}
-
 async function fetchBlobAsBuffer(url) {
   const maxAttempts = 4
   const delayMs = 1500
@@ -73,7 +60,9 @@ async function fetchBlobAsBuffer(url) {
         console.log(`[compress] Blob fetch attempt ${attempt}/${maxAttempts}: ${url}`)
         await new Promise(r => setTimeout(r, delayMs))
       }
-      const buf = await fetchBlobAsBufferOnce(url)
+      const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
+      const buf = Buffer.from(await res.arrayBuffer())
       if (attempt > 1) console.log(`[compress] Blob fetch succeeded on attempt ${attempt}`)
       return buf
     } catch (err) {
