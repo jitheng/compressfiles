@@ -94,3 +94,80 @@ export function trackDownloadClicked({ compressed_size_bytes, compression_level 
     compressed_size_mb: +(compressed_size_bytes / 1024 / 1024).toFixed(2),
   })
 }
+
+// ── Image Compressor events ────────────────────────────────────────────────
+
+/**
+ * Fired when a user selects or drops an image file.
+ * @param {object} params
+ * @param {number} params.file_size_bytes - Raw file size in bytes
+ * @param {string} params.file_name       - Original filename
+ * @param {string} params.file_type       - MIME type (e.g. 'image/png')
+ */
+export function trackImageFileUploaded({ file_size_bytes, file_name, file_type }) {
+  gtag('event', 'image_file_uploaded', {
+    event_category: 'engagement',
+    file_size_bytes,
+    file_size_mb: +(file_size_bytes / 1024 / 1024).toFixed(2),
+    file_name,
+    file_type,
+  })
+}
+
+/**
+ * Fired when the user clicks "Compress Image" and compression begins.
+ * @param {object} params
+ * @param {string} params.compression_level - 'low' | 'medium' | 'high'
+ * @param {number} params.file_size_bytes   - Original file size in bytes
+ */
+export function trackImageCompressionStarted({ compression_level, file_size_bytes }) {
+  gtag('event', 'image_compression_started', {
+    event_category: 'engagement',
+    compression_level,
+    file_size_bytes,
+    file_size_mb: +(file_size_bytes / 1024 / 1024).toFixed(2),
+  })
+}
+
+/**
+ * Fired when image compression completes successfully.
+ * Mark this as a GA4 Conversion in the GA4 dashboard.
+ * @param {object} params
+ * @param {number} params.original_size_bytes   - Original file size in bytes
+ * @param {number} params.compressed_size_bytes - Compressed file size in bytes
+ * @param {string} params.compression_level     - 'low' | 'medium' | 'high'
+ */
+export function trackImageCompressionSuccess({
+  original_size_bytes,
+  compressed_size_bytes,
+  compression_level,
+}) {
+  const reduction_pct = original_size_bytes > 0
+    ? +(((original_size_bytes - compressed_size_bytes) / original_size_bytes) * 100).toFixed(1)
+    : 0
+
+  gtag('event', 'image_compression_success', {
+    event_category: 'conversion',
+    compression_level,
+    original_size_bytes,
+    compressed_size_bytes,
+    original_size_mb: +(original_size_bytes / 1024 / 1024).toFixed(2),
+    compressed_size_mb: +(compressed_size_bytes / 1024 / 1024).toFixed(2),
+    reduction_pct,
+  })
+}
+
+/**
+ * Fired when the user clicks the "Download compressed image" button.
+ * @param {object} params
+ * @param {number} params.compressed_size_bytes - Final compressed file size
+ * @param {string} params.compression_level     - 'low' | 'medium' | 'high'
+ */
+export function trackImageDownloadClicked({ compressed_size_bytes, compression_level }) {
+  gtag('event', 'image_download_clicked', {
+    event_category: 'conversion',
+    compression_level,
+    compressed_size_bytes,
+    compressed_size_mb: +(compressed_size_bytes / 1024 / 1024).toFixed(2),
+  })
+}
