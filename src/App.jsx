@@ -95,7 +95,7 @@ export default function App() {
           <div className="p-5 rounded-xl bg-white border border-slate-100 shadow-sm">
             <div className="text-2xl mb-2" aria-hidden="true">🔒</div>
             <h2 className="font-semibold text-slate-800 mb-1">100% Private</h2>
-            <p className="text-sm text-slate-500">Files are never stored. Compressed PDFs are generated on-the-fly and auto-deleted from the server immediately.</p>
+            <p className="text-sm text-slate-500">Your files are never stored. PDFs are deleted from the server immediately after download. Images never leave your device — compression runs locally in your browser.</p>
           </div>
           <div className="p-5 rounded-xl bg-white border border-slate-100 shadow-sm">
             <div className="text-2xl mb-2" aria-hidden="true">📱</div>
@@ -105,8 +105,8 @@ export default function App() {
         </section>
 
         {/* SEO FAQ / keyword prose */}
-        <section className="mt-12 prose prose-slate max-w-none text-sm text-slate-500 space-y-3" aria-label="About PDF Compression">
-          <h2 className="text-base font-semibold text-slate-700 !mt-0">How does the PDF compressor work?</h2>
+        <section className="mt-12 prose prose-slate max-w-none text-sm text-slate-500 space-y-3" aria-label="About File Compression">
+          <h2 className="text-base font-semibold text-slate-700 !mt-0">How does the file compressor work?</h2>
           <p>
             Our free online PDF compressor reduces PDF file size by re-encoding embedded images at a lower JPEG quality
             and removing redundant data from the file structure. Unlike tools that only rewrite cross-reference tables,
@@ -115,6 +115,9 @@ export default function App() {
           <p>
             Choose <strong>Low</strong> compression to preserve near-original quality (ideal for print), <strong>Medium</strong> for
             a balanced size/quality trade-off (email &amp; sharing), or <strong>High</strong> for the smallest possible file (web upload &amp; archiving).
+          </p>
+          <p className="text-slate-500 text-sm max-w-2xl mx-auto mt-4">
+            For images, compression happens entirely in your browser using the Canvas API — your JPG, PNG, or WebP file is re-encoded at your chosen quality level without ever leaving your device. No upload, no server, no storage. Switch to the Image tab above to compress photos instantly.
           </p>
         </section>
       </main>
