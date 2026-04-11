@@ -65,6 +65,19 @@ export default function App() {
             a balanced size/quality trade-off (email &amp; sharing), or <strong>High</strong> for the smallest possible file (web upload &amp; archiving).
           </p>
         </section>
+
+        {/* Popular Guides */}
+        <section className="mt-12 border-t border-slate-100 pt-8" aria-label="Popular Guides">
+          <h2 className="text-base font-semibold text-slate-700 mb-4">Popular Guides</h2>
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm list-none !pl-0">
+            <li><a className="text-indigo-600 hover:underline" href="/compress-pdf-under-1mb/">Compress PDF under 1MB</a></li>
+            <li><a className="text-indigo-600 hover:underline" href="/compress-pdf-for-email/">Compress PDF for email attachments</a></li>
+            <li><a className="text-indigo-600 hover:underline" href="/compress-pdf-for-job-application/">Compress PDF for job applications</a></li>
+            <li><a className="text-indigo-600 hover:underline" href="/compress-pdf-on-iphone/">Compress PDF on iPhone</a></li>
+            <li><a className="text-indigo-600 hover:underline" href="/compress-pdf-without-losing-quality/">Compress PDF without losing quality</a></li>
+            <li><a className="text-indigo-600 hover:underline" href="/compress-image-online/">Compress images online</a></li>
+          </ul>
+        </section>
       </main>
 
       {/* Footer */}
