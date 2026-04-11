@@ -14,7 +14,7 @@ export default function App() {
             <text x="16" y="22" textAnchor="middle" fontSize="7" fontWeight="bold" fill="#4f6ef7" fontFamily="sans-serif">PDF</text>
           </svg>
           <div>
-            <h1 className="text-lg font-bold text-slate-900 leading-none">PDF Compressor</h1>
+            <p className="text-lg font-bold text-slate-900 leading-none">CompressFiles</p>
             <p className="text-xs text-slate-500 mt-0.5">Free · Private · No sign-up</p>
           </div>
         </div>
